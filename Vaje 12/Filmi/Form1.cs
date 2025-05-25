@@ -78,17 +78,26 @@ namespace Filmi
             }
         }
 
+        private Dictionary<string, string> columnMapping;
+
         private void PopulateComboBox()
         {
-            comboBoxColumn.Items.Add("Naslov");
-            comboBoxColumn.Items.Add("Leto");
-            comboBoxColumn.Items.Add("Reziser");
-            comboBoxColumn.Items.Add("Dodaj novi film...");
-            comboBoxColumn.Items.Add("Spremeni ocene za leto...");
+                    // Map visible names to actual column names in your table
+            columnMapping = new Dictionary<string, string>()
+            {
+                { "Naslov", "naslov" },
+                { "Leto", "leto" },
+                { "Reziser", "reziser" },
+                { "Dodaj novi film...", "add" },
+                { "Spremeni ocene za leto...", "change" }
+            };
 
+            comboBoxColumn.Items.AddRange(columnMapping.Keys.ToArray());
             comboBoxColumn.SelectedIndexChanged += comboBoxColumn_SelectedIndexChanged;
             comboBoxColumn.SelectedIndex = 0;
         }
+
+
 
         private void comboBoxColumn_SelectedIndexChanged(object sender, EventArgs e)
         {
@@ -117,7 +126,8 @@ namespace Filmi
 
         private void buttonSearch_Click(object sender, EventArgs e)
         {
-            string selectedColumn = comboBoxColumn.SelectedItem.ToString();
+            string selectedDisplay = comboBoxColumn.SelectedItem.ToString();
+            string selectedColumn = columnMapping[selectedDisplay];
             string searchText = textBoxSearch.Text.Trim().Replace("'", "''");
 
             if (string.IsNullOrWhiteSpace(searchText))
@@ -127,26 +137,40 @@ namespace Filmi
             }
 
             DataView view = new DataView(filmiTable);
-            if (selectedColumn == "leto")
+
+            try
             {
-                // leto is an integer, so do exact match
-                if (int.TryParse(searchText, out int year) && year > 0)
+                if (selectedColumn == "leto")
                 {
-                    view.RowFilter = $"Convert(leto, 'System.String') LIKE '%{year}%'";
+                    if (int.TryParse(searchText, out int year))
+                    {
+                        // Exact numeric match — no LIKE
+                        view.RowFilter = $"leto = {year}";
+                    }
+                    else
+                    {
+                        MessageBox.Show("Prosim vnesite pravilno številko za leto.");
+                        return;
+                    }
+                }
+                else if (selectedColumn == "naslov" || selectedColumn == "reziser")
+                {
+                    view.RowFilter = $"{selectedColumn} LIKE '%{searchText}%'";
                 }
                 else
                 {
-                    MessageBox.Show("Prosim vnesite pravilno številko za leto.");
+                    MessageBox.Show("Iskanje ni omogočeno za to možnost.");
                     return;
                 }
-            }
-            else
-            {
-                view.RowFilter = $"{selectedColumn} LIKE '%{searchText}%'";
-            }
 
-            dataGridView1.DataSource = view;
+                dataGridView1.DataSource = view;
+            }
+            catch (Exception ex)
+            {
+                MessageBox.Show("Napaka pri filtriranju: " + ex.Message);
+            }
         }
+
 
         private void buttonAddMovie_Click(object sender, EventArgs e)
         {
@@ -162,43 +186,44 @@ namespace Filmi
 
             if (!int.TryParse(yearText, out int year))
             {
-                MessageBox.Show("Leto more biti celo stevilo.");
+                MessageBox.Show("Leto mora biti celo število.");
                 return;
             }
 
             if (year < 0)
             {
-                MessageBox.Show("Leto more biti pozitivno");
+                MessageBox.Show("Leto mora biti pozitivno.");
                 return;
             }
 
             try
             {
-                string connectionString = "Data Source=filmi.sqlite";
-                using (SQLiteConnection connection = new SQLiteConnection(connectionString))
+                DataRow newRow = filmiTable.NewRow();
+                newRow["naslov"] = title;
+                newRow["leto"] = year;
+
+                if (filmiTable.Columns.Contains("reziser") && !string.IsNullOrWhiteSpace(director))
                 {
-                    connection.Open();
-
-                    string insertQuery = "INSERT INTO filmi (naslov, leto, reziser) VALUES (@naslov, @leto, @reziser)";
-                    using (SQLiteCommand command = new SQLiteCommand(insertQuery, connection))
-                    {
-                        command.Parameters.AddWithValue("@naslov", title);
-                        command.Parameters.AddWithValue("@leto", year);
-                        command.Parameters.AddWithValue("@reziser", string.IsNullOrWhiteSpace(director) ? DBNull.Value : (object)director);
-
-                        command.ExecuteNonQuery();
-                    }
+                    newRow["reziser"] = director;
                 }
 
-                MessageBox.Show("Film uspesno dodan!");
-                LoadFilmiData();
+                // Set defaults for other columns
+                if (filmiTable.Columns.Contains("ocena"))
+                    newRow["ocena"] = DBNull.Value;
+
+                if (filmiTable.Columns.Contains("opis"))
+                    newRow["opis"] = DBNull.Value;
+
+                filmiTable.Rows.Add(newRow);
+
+                MessageBox.Show("Film je bil dodan v lokalno kopijo (ni shranjeno v bazo).");
+                dataGridView1.DataSource = filmiTable;
             }
             catch (Exception ex)
             {
-                MessageBox.Show("Napaka pri dodajanju filma: " + ex.Message);
+                MessageBox.Show("Napaka pri dodajanju filma v lokalno kopijo: " + ex.Message);
             }
         }
-
         private void buttonApplyChange_Click(object sender, EventArgs e)
         {
             if (!int.TryParse(textBoxChangeYear.Text.Trim(), out int year))
@@ -209,13 +234,13 @@ namespace Filmi
 
             if (year < 0)
             {
-                MessageBox.Show("Leto more biti pozitivno");
+                MessageBox.Show("Leto mora biti pozitivno.");
                 return;
             }
 
             if (!double.TryParse(textBoxChangeDelta.Text.Trim(), out double delta))
             {
-                MessageBox.Show("Nepravilna sprememba.");
+                MessageBox.Show("Nepravilna sprememba ocene.");
                 return;
             }
 
@@ -232,7 +257,7 @@ namespace Filmi
                 }
             }
 
-            MessageBox.Show($"{changed} ocen je spremenjeno.");
+            MessageBox.Show($"{changed} ocen je bilo spremenjenih (lokalno, brez shranjevanja v bazo).");
             dataGridView1.DataSource = filmiTable;
         }
     }
